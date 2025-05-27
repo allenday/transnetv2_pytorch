@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "transnetv2_pytorch"
+name = "transnetv2-pytorch"
 version = "1.0.0"
 description = "TransNetV2 PyTorch implementation for video scene detection"
 readme = "README.md"
@@ -49,7 +49,7 @@ Repository = "https://github.com/allenday/transnetv2_pytorch"
 Issues = "https://github.com/allenday/transnetv2_pytorch/issues"
 
 [project.scripts]
-transnetv2_predict = "transnetv2.transnetv2:main"
+transnetv2_pytorch = "transnetv2_pytorch.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

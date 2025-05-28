@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "transnetv2-pytorch"
+version = "1.0.0"
+description = "TransNetV2 PyTorch implementation for video scene detection"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "TransNetV2 Contributors"}
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Multimedia :: Video",
+]
+dependencies = [
+    "ffmpeg-python",
+    "numpy",
+    "pandas",
+    "pillow",
+    "torch>=1.9.0",
+    "tqdm"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "black",
+    "flake8",
+    "mypy"
+]
+
+[project.urls]
+Homepage = "https://github.com/allenday/transnetv2_pytorch"
+Repository = "https://github.com/allenday/transnetv2_pytorch"
+Issues = "https://github.com/allenday/transnetv2_pytorch/issues"
+
+[project.scripts]
+transnetv2_pytorch = "transnetv2_pytorch.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["transnetv2*"]
+
+[tool.setuptools.package-dir]
+transnetv2 = "inference-pytorch"
+
+[tool.setuptools.package-data]
+transnetv2_pytorch = ["transnetv2-pytorch-weights.pth"]
+
+[tool.setuptools]
+zip-safe = false 

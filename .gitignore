@@ -2,6 +2,10 @@
 *.npy
 *.mp4
 *.pickle
+*.pyc
+*.egg-info
+.DS_Store
 .idea
 .ipynb_checkpoints
-.venv
+.venv/
+dist/

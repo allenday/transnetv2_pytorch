@@ -11,121 +11,149 @@ from transnetv2_pytorch.cli import (
     get_video_fps
 )
 import torch
+from unittest.mock import patch, MagicMock
+
+def get_test_device():
+    """Get the device to use for testing based on environment variable"""
+    device_env = os.environ.get('TRANSNET_TEST_DEVICE', 'cpu')
+    if device_env == 'mps' and hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+        return 'mps'
+    elif device_env == 'cuda' and torch.cuda.is_available():
+        return 'cuda'
+    return 'cpu'
 
 class TestUtilityFunctions:
-    """Test utility functions from CLI"""
+    """Test utility functions in the CLI module"""
+    
+    @pytest.fixture(autouse=True)
+    def setup_env(self):
+        """Set up environment variables for tests"""
+        self.original_env = os.environ.copy()
+        os.environ['TRANSNET_TEST_DEVICE'] = get_test_device()
+        yield
+        os.environ.clear()
+        os.environ.update(self.original_env)
     
     def test_detect_best_device(self):
-        """Test device detection"""
+        """Test automatic device detection"""
         device = detect_best_device()
         assert isinstance(device, torch.device)
-        assert device.type in ['cpu', 'cuda', 'mps']
+        assert device.type in ['cuda', 'mps', 'cpu']
     
     def test_get_device_auto(self):
-        """Test get_device with auto option"""
+        """Test get_device with 'auto' argument"""
         device = get_device('auto')
         assert isinstance(device, torch.device)
+        assert device.type in ['cuda', 'mps', 'cpu']
     
-    def test_get_device_cpu(self):
-        """Test get_device with CPU"""
+    def test_get_device_explicit(self):
+        """Test get_device with explicit device"""
         device = get_device('cpu')
-        assert device == torch.device('cpu')
+        assert isinstance(device, torch.device)
+        assert device.type == 'cpu'
+        
+        # Test with cuda if available
+        if torch.cuda.is_available():
+            device = get_device('cuda')
+            assert device.type == 'cuda'
     
-    def test_frame_to_timestamp(self):
-        """Test frame to timestamp conversion"""
-        # Test with 25 FPS
-        timestamp = frame_to_timestamp(25, 25.0)
-        assert timestamp == "1.000"
+    @patch('transnetv2_pytorch.transnetv2_pytorch.TransNetV2.get_video_fps')
+    def test_get_video_fps_deprecated(self, mock_get_fps):
+        """Test the deprecated get_video_fps function"""
+        mock_get_fps.return_value = 30.0
         
-        # Test with 30 FPS
-        timestamp = frame_to_timestamp(30, 30.0)
-        assert timestamp == "1.000"
+        fps = get_video_fps('dummy_video.mp4')
+        assert fps == 30.0
+        mock_get_fps.assert_called_once_with('dummy_video.mp4')
+    
+    def test_frame_to_timestamp_deprecated(self):
+        """Test the deprecated frame_to_timestamp function"""
+        timestamp = frame_to_timestamp(100, 25.0)
+        assert timestamp == "4.000"
         
-        # Test with fractional result
-        timestamp = frame_to_timestamp(15, 30.0)
-        assert timestamp == "0.500"
-        
-        # Test with zero frame
         timestamp = frame_to_timestamp(0, 25.0)
         assert timestamp == "0.000"
+        
+        timestamp = frame_to_timestamp(150, 29.97)
+        expected = 150 / 29.97
+        assert timestamp == f"{expected:.3f}"
     
     def test_save_results_csv(self):
         """Test saving results in CSV format"""
         test_data = [
-            {'shot_id': 1, 'start_frame': 0, 'end_frame': 10, 'probability': 0.8},
-            {'shot_id': 2, 'start_frame': 11, 'end_frame': 20, 'probability': 0.9}
+            {'shot_id': 1, 'start_frame': 0, 'end_frame': 50, 'probability': 0.8},
+            {'shot_id': 2, 'start_frame': 51, 'end_frame': 100, 'probability': 0.9}
         ]
         
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
-            temp_path = f.name
-        
-        try:
-            save_results(test_data, temp_path, 'csv')
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = os.path.join(tmpdir, 'test.csv')
+            save_results(test_data, output_path, 'csv')
             
-            # Read back and verify
-            df = pd.read_csv(temp_path)
+            assert os.path.exists(output_path)
+            
+            # Verify content
+            df = pd.read_csv(output_path)
             assert len(df) == 2
-            assert list(df.columns) == ['shot_id', 'start_frame', 'end_frame', 'probability']
+            assert 'shot_id' in df.columns
             assert df.iloc[0]['shot_id'] == 1
             assert df.iloc[1]['shot_id'] == 2
-        finally:
-            os.unlink(temp_path)
     
     def test_save_results_json(self):
         """Test saving results in JSON format"""
         test_data = [
-            {'shot_id': 1, 'start_frame': 0, 'end_frame': 10, 'probability': 0.8},
-            {'shot_id': 2, 'start_frame': 11, 'end_frame': 20, 'probability': 0.9}
+            {'shot_id': 1, 'start_frame': 0, 'end_frame': 50, 'probability': 0.8},
+            {'shot_id': 2, 'start_frame': 51, 'end_frame': 100, 'probability': 0.9}
         ]
         
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-            temp_path = f.name
-        
-        try:
-            save_results(test_data, temp_path, 'json')
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = os.path.join(tmpdir, 'test.json')
+            save_results(test_data, output_path, 'json')
             
-            # Read back and verify
-            with open(temp_path, 'r') as f:
-                loaded_data = json.load(f)
+            assert os.path.exists(output_path)
             
-            assert len(loaded_data) == 2
-            assert loaded_data[0]['shot_id'] == 1
-            assert loaded_data[1]['shot_id'] == 2
-        finally:
-            os.unlink(temp_path)
+            # Verify content
+            with open(output_path, 'r') as f:
+                data = json.load(f)
+            
+            assert len(data) == 2
+            assert data[0]['shot_id'] == 1
+            assert data[1]['shot_id'] == 2
     
     def test_save_results_jsonl(self):
         """Test saving results in JSONL format"""
         test_data = [
-            {'shot_id': 1, 'start_frame': 0, 'end_frame': 10, 'probability': 0.8},
-            {'shot_id': 2, 'start_frame': 11, 'end_frame': 20, 'probability': 0.9}
+            {'shot_id': 1, 'start_frame': 0, 'end_frame': 50, 'probability': 0.8},
+            {'shot_id': 2, 'start_frame': 51, 'end_frame': 100, 'probability': 0.9}
         ]
         
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False) as f:
-            temp_path = f.name
-        
-        try:
-            save_results(test_data, temp_path, 'jsonl')
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = os.path.join(tmpdir, 'test.jsonl')
+            save_results(test_data, output_path, 'jsonl')
             
-            # Read back and verify
-            with open(temp_path, 'r') as f:
+            assert os.path.exists(output_path)
+            
+            # Verify content
+            with open(output_path, 'r') as f:
                 lines = f.readlines()
             
             assert len(lines) == 2
-            first_item = json.loads(lines[0])
-            second_item = json.loads(lines[1])
-            assert first_item['shot_id'] == 1
-            assert second_item['shot_id'] == 2
-        finally:
-            os.unlink(temp_path)
+            
+            # Each line should be valid JSON
+            data1 = json.loads(lines[0])
+            data2 = json.loads(lines[1])
+            
+            assert data1['shot_id'] == 1
+            assert data2['shot_id'] == 2
     
-    def test_save_results_invalid_format(self):
-        """Test saving results with invalid format"""
-        test_data = [{'shot_id': 1}]
+    def test_save_results_unsupported_format(self):
+        """Test saving results with unsupported format"""
+        test_data = [{'shot_id': 1, 'start_frame': 0, 'end_frame': 50}]
         
-        with tempfile.NamedTemporaryFile() as f:
-            with pytest.raises(ValueError):
-                save_results(test_data, f.name, 'invalid_format')
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = os.path.join(tmpdir, 'test.xml')
+            
+            with pytest.raises(ValueError, match="Unsupported format"):
+                save_results(test_data, output_path, 'xml')
 
 if __name__ == '__main__':
     pytest.main([__file__]) 

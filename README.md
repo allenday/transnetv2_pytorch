@@ -60,35 +60,65 @@ transnetv2_pytorch --help
 
 ### Python API
 
+#### Basic Usage
+
 ```python
 import torch
 from transnetv2_pytorch import TransNetV2
 
-# Initialize model
-model = TransNetV2()
+# Initialize model with automatic device detection
+model = TransNetV2(device='auto')  # Automatically selects best device
 model.eval()
 
-# Automatic device selection
-if torch.cuda.is_available():
-    model = model.cuda()
-elif torch.backends.mps.is_available():
-    model = model.to('mps')
+# Load weights
+state_dict = torch.load("transnetv2-pytorch-weights.pth", map_location=model.device)
+model.load_state_dict(state_dict)
 
 with torch.no_grad():
-    # Input shape: batch_size x video_frames x height x width x channels (RGB)
-    input_video = torch.zeros(1, 100, 27, 48, 3, dtype=torch.uint8)
+    # Basic prediction (returns raw data)
+    video_frames, single_frame_pred, all_frame_pred = model.predict_video("video.mp4")
     
-    # Move to same device as model
-    input_video = input_video.to(next(model.parameters()).device)
+    # Enhanced prediction with rich scene metadata
+    results = model.predict_video_with_scenes("video.mp4", threshold=0.5)
     
-    single_frame_pred, all_frame_pred = model(input_video)
+    print(f"Video FPS: {results['fps']}")
+    print(f"Total scenes: {results['total_scenes']}")
     
-    # Get predictions
-    single_frame_pred = torch.sigmoid(single_frame_pred).cpu().numpy()
-    all_frame_pred = torch.sigmoid(all_frame_pred["many_hot"]).cpu().numpy()
-    
-    # Find shot boundaries (example)
-    shot_boundaries = single_frame_pred > 0.5
+    # Access rich scene data with timestamps and shot IDs
+    for scene in results['scenes'][:3]:
+        print(f"Shot {scene['shot_id']}: "
+              f"frames {scene['start_frame']}-{scene['end_frame']} "
+              f"({scene['start_time']}s-{scene['end_time']}s) "
+              f"probability={scene['probability']:.4f}")
+```
+
+#### Enhanced Features for Application Developers
+
+The TransNetV2 class now provides rich functionality previously only available in the CLI:
+
+```python
+# Automatic device detection
+model = TransNetV2(device='auto')  # Chooses CUDA > MPS > CPU automatically
+
+# Extract video FPS
+fps = model.get_video_fps("video.mp4")
+
+# Convert frame numbers to timestamps
+timestamp = TransNetV2.frame_to_timestamp(frame_number=150, fps=25.0)
+print(f"Frame 150 = {timestamp}s")
+
+# Get structured scene data with metadata
+scenes = model.predictions_to_scenes_with_data(
+    predictions,  # numpy array or torch tensor
+    fps=25.0,     # optional, can auto-extract from video
+    threshold=0.5
+)
+
+# Each scene contains:
+# - shot_id: Scene number (1-indexed)
+# - start_frame, end_frame: Frame boundaries
+# - start_time, end_time: Timestamps (if FPS available)
+# - probability: Maximum probability in the scene
 ```
 
 #### Advanced Usage
@@ -98,16 +128,27 @@ with torch.no_grad():
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 model = TransNetV2(device=device)
 
-# Load custom weights
-model = TransNetV2()
-state_dict = torch.load('custom_weights.pth', map_location='cpu')
-model.load_state_dict(state_dict)
+# Working with existing predictions
+import numpy as np
+predictions = np.array([...])  # Your existing predictions
 
-# Batch processing
-batch_size = 4
-for batch in video_batches:
-    predictions = model(batch)
-    # Process predictions...
+# Convert to rich scene data
+scenes = model.predictions_to_scenes_with_data(
+    predictions, 
+    video_path="video.mp4",  # Will auto-extract FPS
+    threshold=0.5
+)
+
+# Or provide FPS directly
+scenes = model.predictions_to_scenes_with_data(
+    predictions, 
+    fps=29.97,
+    threshold=0.5
+)
+
+# Comprehensive video analysis
+results = model.predict_video_with_scenes("video.mp4")
+# Returns: video_frames, predictions, fps, scenes, total_scenes
 ```
 
 ## Device Support

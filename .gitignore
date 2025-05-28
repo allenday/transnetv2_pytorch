@@ -5,6 +5,7 @@
 *.pyc
 *.egg-info
 .DS_Store
+.coverage.*
 .idea
 .ipynb_checkpoints
 .venv/

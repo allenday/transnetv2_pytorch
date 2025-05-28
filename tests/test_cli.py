@@ -243,6 +243,83 @@ class TestCLI:
         
         assert result.returncode != 0
         assert 'Video file not found' in result.stdout or 'Video file not found' in result.stderr
+    
+    def test_cli_custom_weights_file(self):
+        """Test CLI with custom weights file"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_file = os.path.join(tmpdir, 'test_output.csv')
+            fake_weights = os.path.join(tmpdir, 'fake_weights.pth')
+            
+            # Create a fake weights file
+            with open(fake_weights, 'w') as f:
+                f.write("fake weights")
+            
+            result = subprocess.run([
+                sys.executable, '-m', 'transnetv2_pytorch',
+                TEST_VIDEO_PATH,
+                '--output', output_file,
+                '--weights', fake_weights,
+                '--quiet'
+            ], capture_output=True, text=True)
+            
+            # Should fail because weights file is invalid, but should try to load it
+            assert result.returncode != 0
+    
+    def test_cli_nonexistent_weights_file(self):
+        """Test CLI with non-existent weights file"""
+        result = subprocess.run([
+            sys.executable, '-m', 'transnetv2_pytorch',
+            TEST_VIDEO_PATH,
+            '--weights', 'nonexistent_weights.pth',
+            '--quiet'
+        ], capture_output=True, text=True)
+        
+        assert result.returncode != 0
+        assert 'Weights file not found' in result.stdout or 'Weights file not found' in result.stderr
+    
+    def test_cli_auto_detect_jsonl_format(self):
+        """Test CLI auto-detects JSONL format from file extension"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_file = os.path.join(tmpdir, 'test_output.jsonl')
+            
+            result = subprocess.run([
+                sys.executable, '-m', 'transnetv2_pytorch',
+                TEST_VIDEO_PATH,
+                '--output', output_file,
+                '--quiet'
+            ], capture_output=True, text=True)
+            
+            assert result.returncode == 0, f"CLI failed: {result.stderr}"
+            assert os.path.exists(output_file), "Output file was not created"
+            
+            # Should be JSONL format even though we didn't specify --format jsonl
+            with open(output_file, 'r') as f:
+                lines = f.readlines()
+            
+            assert len(lines) > 0
+            # Each line should be valid JSON
+            for line in lines:
+                json.loads(line.strip())
+    
+    def test_cli_explicit_format_override(self):
+        """Test that explicit format overrides file extension detection"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_file = os.path.join(tmpdir, 'test_output.json')
+            
+            result = subprocess.run([
+                sys.executable, '-m', 'transnetv2_pytorch',
+                TEST_VIDEO_PATH,
+                '--output', output_file,
+                '--format', 'csv',  # Explicitly specify CSV despite .json extension
+                '--quiet'
+            ], capture_output=True, text=True)
+            
+            assert result.returncode == 0, f"CLI failed: {result.stderr}"
+            assert os.path.exists(output_file), "Output file was not created"
+            
+            # Should be CSV format despite .json extension
+            df = pd.read_csv(output_file)
+            assert 'shot_id' in df.columns
 
 if __name__ == '__main__':
     pytest.main([__file__]) 

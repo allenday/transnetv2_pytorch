@@ -21,12 +21,10 @@ def detect_best_device():
     Automatically detect the best available device
     Priority: CUDA > MPS > CPU
     """
-    if torch.cuda.is_available():
-        return torch.device('cuda')
-    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-        return torch.device('mps')
-    else:
-        return torch.device('cpu')
+    # Import here to use the enhanced TransNetV2 method
+    from .transnetv2_pytorch import TransNetV2
+    device_str = TransNetV2._detect_best_device()
+    return torch.device(device_str)
 
 def get_device(device_arg):
     """
@@ -42,36 +40,21 @@ def get_device(device_arg):
 def get_video_fps(video_path, verbose=False):
     """
     Extract FPS from video file using ffmpeg
+    DEPRECATED: Use TransNetV2.get_video_fps() instead
     """
-    try:
-        import ffmpeg
-        probe = ffmpeg.probe(video_path)
-        video_stream = next((stream for stream in probe['streams'] if stream['codec_type'] == 'video'), None)
-        if video_stream is None:
-            if verbose:
-                tqdm.write("Warning: No video stream found, defaulting to 25 FPS")
-            return 25.0
-        
-        fps_str = video_stream['r_frame_rate']
-        # Handle fraction format like "25/1" or "30000/1001"
-        if '/' in fps_str:
-            num, den = fps_str.split('/')
-            fps = float(num) / float(den)
-        else:
-            fps = float(fps_str)
-        
-        return fps
-    except Exception as e:
-        if verbose:
-            tqdm.write(f"Warning: Could not extract FPS ({e}), defaulting to 25 FPS")
-        return 25.0
+    # Import here to use the enhanced TransNetV2 method
+    from .transnetv2_pytorch import TransNetV2
+    model = TransNetV2()
+    return model.get_video_fps(video_path)
 
 def frame_to_timestamp(frame_number, fps):
     """
     Convert frame number to timestamp in ss.mmm format
+    DEPRECATED: Use TransNetV2.frame_to_timestamp() instead
     """
-    seconds = frame_number / fps
-    return f"{seconds:.3f}"
+    # Import here to use the enhanced TransNetV2 method
+    from .transnetv2_pytorch import TransNetV2
+    return TransNetV2.frame_to_timestamp(frame_number, fps)
 
 def save_results(data, output_path, format_type):
     """
@@ -97,33 +80,19 @@ def process_video_to_output(model, video_path, output_path, format_type, verbose
     if not quiet:
         print(f"Processing video: {video_path}")
     
-    # Get video FPS
-    fps = get_video_fps(video_path, verbose)
-    if verbose:
-        tqdm.write(f"Video FPS: {fps:.3f}")
-    
     start_time = time.time()
     
     # Create progress bar for overall process (verbose only and not suppressed)
-    pbar = None if (quiet or not verbose or no_progress_bar) else tqdm(total=3, desc="Processing", unit="step")
+    pbar = None if (quiet or not verbose or no_progress_bar) else tqdm(total=2, desc="Processing", unit="step")
     
     if pbar:
         pbar.set_description("Running inference")
     
-    # Get predictions from the model - pass no_progress_bar flag
-    video_frames, single_frame_predictions, all_frame_predictions = \
-        model.predict_video(video_path, quiet=(quiet or no_progress_bar))
-    
-    if pbar:
-        pbar.set_description("Processing predictions")
-        pbar.update(1)
-    
-    # Convert to numpy arrays
-    single_frame_predictions = single_frame_predictions.cpu().detach().numpy()
-    all_frame_predictions = all_frame_predictions.cpu().detach().numpy()
-    
-    # Get scene boundaries
-    scenes = model.predictions_to_scenes(single_frame_predictions)
+    # Use the enhanced method that provides all the rich data
+    results = model.predict_video_with_scenes(
+        video_path, 
+        quiet=(quiet or no_progress_bar)
+    )
     
     if pbar:
         pbar.set_description("Generating output")
@@ -132,34 +101,18 @@ def process_video_to_output(model, video_path, output_path, format_type, verbose
     inference_time = time.time() - start_time
     if verbose:
         tqdm.write(f"Inference time: {inference_time:.2f} seconds")
-        tqdm.write(f"Found {len(scenes)} scenes")
+        tqdm.write(f"Found {results['total_scenes']} scenes")
+        tqdm.write(f"Video FPS: {results['fps']:.3f}")
     
-    # Prepare data for output
-    output_data = []
-    
-    for i, scene in enumerate(scenes):
-        start_frame = int(scene[0])
-        end_frame = int(scene[1])
-        
-        # Calculate timestamps
-        start_time_str = frame_to_timestamp(start_frame, fps)
-        end_time_str = frame_to_timestamp(end_frame, fps)
-        
-        # Get the maximum probability in this scene range
-        scene_probs = single_frame_predictions[start_frame:end_frame+1]
-        max_probability = float(np.max(scene_probs)) if len(scene_probs) > 0 else 0.0
-        
-        output_data.append({
-            'shot_id': i + 1,  # Start from 1
-            'start_frame': start_frame,
-            'end_frame': end_frame,
-            'start_time': start_time_str,
-            'end_time': end_time_str,
-            'probability': max_probability
-        })
+    # The scenes data is already in the perfect format for output
+    output_data = results['scenes']
     
     # Save results in the specified format
     save_results(output_data, output_path, format_type)
+    
+    if pbar:
+        pbar.update(1)
+        pbar.close()
     
     if not quiet:
         print(f"Results saved to: {output_path} (format: {format_type})")
@@ -212,6 +165,9 @@ def main():
     
     args = parser.parse_args()
     
+    # Check if format was explicitly specified by user
+    format_explicitly_specified = '--format' in sys.argv
+    
     # Check if video file is provided
     if args.video is None:
         parser.error("Video file is required. Usage: python -m transnetv2_pytorch <video_file>")
@@ -225,8 +181,8 @@ def main():
         video_name = os.path.splitext(os.path.basename(args.video))[0]
         args.output = f"{video_name}_scenes.{args.format}"
     
-    # Auto-detect format from output file extension if not specified explicitly
-    elif args.format == 'csv':  # Only auto-detect if format is still default
+    # Auto-detect format from output file extension if format not explicitly specified
+    elif not format_explicitly_specified:
         ext = os.path.splitext(args.output)[1].lower()
         if ext == '.json':
             args.format = 'json'
@@ -250,11 +206,15 @@ def main():
             tqdm.write("MPS not supported in this PyTorch version")
         tqdm.write(f"Using weights: {args.weights}")
     
-    # Initialize model (no output in normal mode)
+    # Initialize model with enhanced device handling
     if args.verbose:
         tqdm.write("Initializing model...")
     
-    model = TransNetV2(device=device)
+    # Use the enhanced constructor that handles device auto-detection
+    if args.device == 'auto':
+        model = TransNetV2(device='auto')
+    else:
+        model = TransNetV2(device=device)
     
     # Load weights
     if not os.path.exists(args.weights):

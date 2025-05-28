@@ -9,6 +9,7 @@ import numpy as np
 import random
 import warnings
 from tqdm import tqdm
+from typing import List, Dict, Any, Optional, Union
 
 # Silence MPS fallback warnings since we're intentionally using the fallback
 warnings.filterwarnings("ignore", message=".*MPS backend.*will fall back to run on the CPU.*")
@@ -26,8 +27,12 @@ class TransNetV2(nn.Module):
                  use_resnet_features=False,  # not supported
                  use_resnet_like_top=False,  # not supported
                  frame_similarity_on_last_layer=False,
-                 device='cpu'):  # not supported
+                 device='auto'):  # Enhanced to support 'auto'
         super(TransNetV2, self).__init__()
+        
+        # Handle device auto-detection
+        if device == 'auto':
+            device = self._detect_best_device()
         
         self.device = torch.device(device)
         self._input_size = (27, 48, 3)
@@ -59,7 +64,64 @@ class TransNetV2(nn.Module):
 
         self.use_mean_pooling = use_mean_pooling
         self.eval()
-        self.to(device)
+        self.to(self.device)
+    
+    @staticmethod
+    def _detect_best_device():
+        """
+        Automatically detect the best available device
+        Priority: CUDA > MPS > CPU
+        """
+        if torch.cuda.is_available():
+            return 'cuda'
+        elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            return 'mps'
+        else:
+            return 'cpu'
+    
+    def get_video_fps(self, video_path: str) -> float:
+        """
+        Extract FPS from video file using ffmpeg
+        
+        Args:
+            video_path: Path to the video file
+            
+        Returns:
+            FPS as float, defaults to 25.0 if extraction fails
+        """
+        try:
+            import ffmpeg
+            probe = ffmpeg.probe(video_path)
+            video_stream = next((stream for stream in probe['streams'] if stream['codec_type'] == 'video'), None)
+            if video_stream is None:
+                return 25.0
+            
+            fps_str = video_stream['r_frame_rate']
+            # Handle fraction format like "25/1" or "30000/1001"
+            if '/' in fps_str:
+                num, den = fps_str.split('/')
+                fps = float(num) / float(den)
+            else:
+                fps = float(fps_str)
+            
+            return fps
+        except Exception:
+            return 25.0
+    
+    @staticmethod
+    def frame_to_timestamp(frame_number: int, fps: float) -> str:
+        """
+        Convert frame number to timestamp in ss.mmm format
+        
+        Args:
+            frame_number: Frame index
+            fps: Frames per second
+            
+        Returns:
+            Timestamp string in format "ss.mmm"
+        """
+        seconds = frame_number / fps
+        return f"{seconds:.3f}"
     
     def forward(self, inputs):
         assert isinstance(inputs, torch.Tensor) and list(inputs.shape[2:]) == [27, 48, 3] and inputs.dtype == torch.uint8, \
@@ -194,6 +256,111 @@ class TransNetV2(nn.Module):
             return np.array([[0, len(predictions) - 1]], dtype=np.int32)
 
         return np.array(scenes, dtype=np.int32)
+    
+    def predictions_to_scenes_with_data(self, 
+                                       predictions: Union[np.ndarray, torch.Tensor], 
+                                       fps: Optional[float] = None,
+                                       video_path: Optional[str] = None,
+                                       threshold: float = 0.5) -> List[Dict[str, Any]]:
+        """
+        Convert predictions to structured scene data with timestamps and metadata
+        
+        Args:
+            predictions: Single frame predictions array/tensor
+            fps: Video FPS (if None and video_path provided, will extract from video)
+            video_path: Path to video file (used to extract FPS if fps not provided)
+            threshold: Threshold for scene boundary detection
+            
+        Returns:
+            List of dictionaries with scene information including:
+            - shot_id: Scene number (1-indexed)
+            - start_frame: Starting frame index
+            - end_frame: Ending frame index  
+            - start_time: Starting timestamp (if FPS available)
+            - end_time: Ending timestamp (if FPS available)
+            - probability: Maximum probability in the scene
+        """
+        # Convert to numpy if tensor
+        if isinstance(predictions, torch.Tensor):
+            predictions = predictions.cpu().detach().numpy()
+        
+        # Get FPS if not provided
+        if fps is None and video_path is not None:
+            fps = self.get_video_fps(video_path)
+        
+        # Get basic scene boundaries
+        scenes = self.predictions_to_scenes(predictions, threshold)
+        
+        # Build structured data
+        output_data = []
+        for i, scene in enumerate(scenes):
+            start_frame = int(scene[0])
+            end_frame = int(scene[1])
+            
+            # Get the maximum probability in this scene range
+            scene_probs = predictions[start_frame:end_frame+1]
+            max_probability = float(np.max(scene_probs)) if len(scene_probs) > 0 else 0.0
+            
+            scene_data = {
+                'shot_id': i + 1,  # Start from 1
+                'start_frame': start_frame,
+                'end_frame': end_frame,
+                'probability': max_probability
+            }
+            
+            # Add timestamps if FPS is available
+            if fps is not None:
+                scene_data['start_time'] = self.frame_to_timestamp(start_frame, fps)
+                scene_data['end_time'] = self.frame_to_timestamp(end_frame, fps)
+            
+            output_data.append(scene_data)
+        
+        return output_data
+    
+    def predict_video_with_scenes(self, 
+                                 video_path: str, 
+                                 threshold: float = 0.5,
+                                 quiet: bool = False) -> Dict[str, Any]:
+        """
+        Predict video scenes and return comprehensive results
+        
+        Args:
+            video_path: Path to video file
+            threshold: Threshold for scene boundary detection
+            quiet: Whether to suppress progress output
+            
+        Returns:
+            Dictionary containing:
+            - video_frames: Raw video frames
+            - single_frame_predictions: Single frame predictions
+            - all_frame_predictions: All frame predictions  
+            - fps: Video FPS
+            - scenes: List of scene dictionaries with rich metadata
+            - total_scenes: Number of scenes detected
+        """
+        # Get video FPS
+        fps = self.get_video_fps(video_path)
+        
+        # Get predictions
+        video_frames, single_frame_predictions, all_frame_predictions = \
+            self.predict_video(video_path, quiet=quiet)
+        
+        # Convert predictions to numpy for scene detection
+        single_frame_np = single_frame_predictions.cpu().detach().numpy()
+        
+        # Get structured scene data
+        scenes = self.predictions_to_scenes_with_data(
+            single_frame_np, fps=fps, threshold=threshold
+        )
+        
+        return {
+            'video_frames': video_frames,
+            'single_frame_predictions': single_frame_predictions,
+            'all_frame_predictions': all_frame_predictions,
+            'fps': fps,
+            'scenes': scenes,
+            'total_scenes': len(scenes)
+        }
 
     @staticmethod
     def visualize_predictions(frames: np.ndarray, predictions):

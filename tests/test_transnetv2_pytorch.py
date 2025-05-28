@@ -4,9 +4,7 @@ import numpy as np
 import os
 from unittest.mock import patch, MagicMock
 from transnetv2_pytorch import TransNetV2
-
-# Get the path to the test video
-TEST_VIDEO_PATH = os.path.join(os.path.dirname(__file__), 'test.mp4')
+from tests import TEST_VIDEO_PATH
 
 def get_test_device():
     """Get the device to use for testing based on environment variable"""

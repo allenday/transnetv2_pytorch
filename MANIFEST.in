@@ -1,0 +1,23 @@
+# Include important documentation and configuration files
+include README.md
+include LICENSE
+include pyproject.toml
+include .gitignore
+
+# Include the main package
+recursive-include transnetv2_pytorch *.py *.pth
+
+# Include test files and test data
+recursive-include tests *.py *.mp4
+include tests/__init__.py
+
+# Exclude unnecessary files
+global-exclude *.pyc
+global-exclude *.pyo
+global-exclude *.pyd
+global-exclude __pycache__
+global-exclude .DS_Store
+global-exclude *.egg-info
+global-exclude .git*
+global-exclude .coverage*
+global-exclude .pytest_cache 

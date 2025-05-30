@@ -8,6 +8,7 @@ import torch.nn.functional as functional
 import numpy as np
 import random
 import warnings
+import gc
 from tqdm import tqdm
 from typing import List, Dict, Any, Optional, Union
 
@@ -36,6 +37,9 @@ class TransNetV2(nn.Module):
         
         self.device = torch.device(device)
         self._input_size = (27, 48, 3)
+        
+        # Internal memory optimization settings (always enabled, not exposed to user)
+        self.memory_efficient = True  # Always enable memory optimizations
 
         if use_resnet_features or use_resnet_like_top or use_convex_comb_reg or frame_similarity_on_last_layer:
             raise NotImplemented("Some options not implemented in Pytorch version of Transnet!")
@@ -65,6 +69,19 @@ class TransNetV2(nn.Module):
         self.use_mean_pooling = use_mean_pooling
         self.eval()
         self.to(self.device)
+    
+    def _cleanup_memory(self):
+        """Clean up GPU memory to prevent accumulation"""
+        if self.memory_efficient:
+            if str(self.device) == 'mps':
+                # Force MPS memory cleanup
+                if hasattr(torch.mps, 'empty_cache'):
+                    torch.mps.empty_cache()
+            elif str(self.device) == 'cuda':
+                # Force CUDA memory cleanup  
+                torch.cuda.empty_cache()
+            # Force garbage collection
+            gc.collect()
     
     @staticmethod
     def _detect_best_device():
@@ -172,13 +189,16 @@ class TransNetV2(nn.Module):
 
     def predict_frames(self, frames, quiet=False):
         assert len(frames.shape) == 4 and frames.shape[1:] == self._input_size, \
-            "Input shape must be [batch, frames, height, width, 3]."
+            "Input shape must be [frames, height, width, 3]."
 
         def input_iterator():
-            # return windows of size 100 where the first/last 25 frames are from the previous/next batch
-            # the first and last window must be padded by copies of the first and last frame of the video
+            # Use original algorithm parameters - don't change for memory management
+            window_size = 100
+            step_size = 50  # Keep original step size for all devices
+            
+            # Original working logic
             no_padded_frames_start = 25
-            no_padded_frames_end = 25 + 50 - (len(frames) % 50 if len(frames) % 50 != 0 else 50)  # 25 - 74
+            no_padded_frames_end = 25 + step_size - (len(frames) % step_size if len(frames) % step_size != 0 else step_size)
 
             start_frame = torch.unsqueeze(frames[0], 0)
             end_frame = torch.unsqueeze(frames[-1], 0)
@@ -187,33 +207,55 @@ class TransNetV2(nn.Module):
             )
 
             ptr = 0
-            while ptr + 100 <= len(padded_inputs):
-                out = padded_inputs[ptr:ptr + 100]
-                ptr += 50
-                yield out[np.newaxis]
+            batch_count = 0
+            while ptr + window_size <= len(padded_inputs):
+                batch = padded_inputs[ptr:ptr + window_size]
+                ptr += step_size
+                batch_count += 1
+                yield batch[np.newaxis], batch_count
 
         predictions = []
+        
+        # Create progress bar only if not quiet
+        pbar = None if quiet else tqdm(total=len(frames), desc="Processing frames", unit="frame")
+        
+        try:
+            for batch_input, batch_num in input_iterator():
+                with torch.no_grad():  # Ensure no gradients are computed
+                    single_frame_pred, all_frames_pred = self.predict_raw(batch_input)
+                    
+                    # Extract the non-overlapping portion (original logic)
+                    start_idx = 25
+                    end_idx = 75  # 25 + 50
+                    
+                    predictions.append((
+                        single_frame_pred[0, start_idx:end_idx, 0].clone(),
+                        all_frames_pred[0, start_idx:end_idx, 0].clone()
+                    ))
+                    
+                    # Clean up intermediate tensors
+                    del single_frame_pred, all_frames_pred, batch_input
+                    
+                    # Update progress bar if present
+                    if pbar is not None:
+                        processed_frames = min(len(predictions) * 50, len(frames))
+                        pbar.update(processed_frames - pbar.n)
+                    
+                    # Periodic memory cleanup (doesn't affect algorithm)
+                    if self.memory_efficient and batch_num % 3 == 0:
+                        self._cleanup_memory()
+        finally:
+            # Ensure progress bar is closed
+            if pbar is not None:
+                pbar.close()
 
-        if quiet:
-            # Silent processing
-            for inp in input_iterator():
-                single_frame_pred, all_frames_pred = self.predict_raw(inp)
-                predictions.append((single_frame_pred[0, 25:75, 0],
-                                    all_frames_pred[0, 25:75, 0]))
-        else:
-            # Progress bar processing
-            with tqdm(total=len(frames), desc="Processing frames", unit="frame") as pbar:
-                for inp in input_iterator():
-                    single_frame_pred, all_frames_pred = self.predict_raw(inp)
-                    predictions.append((single_frame_pred[0, 25:75, 0],
-                                        all_frames_pred[0, 25:75, 0]))
-
-                    # Update progress bar
-                    processed_frames = min(len(predictions) * 50, len(frames))
-                    pbar.update(processed_frames - pbar.n)
-
-        single_frame_pred = torch.cat([single_ for single_, all_ in predictions],0)
-        all_frames_pred = torch.cat([all_ for single_, all_ in predictions],0)
+        # Concatenate results efficiently
+        single_frame_pred = torch.cat([single_ for single_, _ in predictions], 0)
+        all_frames_pred = torch.cat([all_ for _, all_ in predictions], 0)
+        
+        # Final cleanup
+        if self.memory_efficient:
+            self._cleanup_memory()
 
         return single_frame_pred[:len(frames)], all_frames_pred[:len(frames)]  # remove extra padded frames
         

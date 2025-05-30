@@ -88,11 +88,21 @@ def process_video_to_output(model, video_path, output_path, format_type, verbose
     if pbar:
         pbar.set_description("Running inference")
     
-    # Use the enhanced method that provides all the rich data
-    results = model.predict_video_with_scenes(
-        video_path, 
-        quiet=(quiet or no_progress_bar)
-    )
+    try:
+        # Use the enhanced method that provides all the rich data
+        results = model.predict_video_with_scenes(
+            video_path, 
+            quiet=(quiet or no_progress_bar)
+        )
+    except RuntimeError as e:
+        if "MPS backend out of memory" in str(e):
+            print("Error: MPS backend out of memory.")
+            print("The model has applied automatic memory optimizations, but your video may still exceed available memory.")
+            print("Try reducing video resolution or splitting longer videos into segments.")
+            raise RuntimeError("TransNetV2 prediction failed: MPS backend out of memory.") from e
+        else:
+            # Re-raise other runtime errors
+            raise
     
     if pbar:
         pbar.set_description("Generating output")
@@ -210,11 +220,8 @@ def main():
     if args.verbose:
         tqdm.write("Initializing model...")
     
-    # Use the enhanced constructor that handles device auto-detection
-    if args.device == 'auto':
-        model = TransNetV2(device='auto')
-    else:
-        model = TransNetV2(device=device)
+    # Use the enhanced constructor that handles device auto-detection and memory optimization automatically
+    model = TransNetV2(device=args.device if args.device != 'auto' else 'auto')
     
     # Load weights
     if not os.path.exists(args.weights):

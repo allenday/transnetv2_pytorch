@@ -160,6 +160,32 @@ This implementation supports:
 
 The model automatically detects and uses the best available device. For MPS devices, unsupported operations (like 3D convolutions) automatically fall back to CPU.
 
+## Memory Optimization
+
+TransNetV2 includes transparent memory optimizations that work automatically without affecting the detection algorithm:
+
+### Automatic Memory Management
+
+The model automatically:
+- **Performs periodic memory cleanup** to prevent accumulation
+- **Uses efficient tensor management** during processing
+- **Applies device-specific memory optimizations** (MPS, CUDA, CPU)
+
+```python
+# Memory optimization is automatic and transparent
+model = TransNetV2(device='auto')  # All optimizations work behind the scenes
+```
+
+### Handling Memory Issues
+
+The memory optimizations are built-in and transparent. For persistent memory issues with very large videos:
+
+1. **Reduce video resolution** before processing
+2. **Split longer videos** into shorter segments  
+3. **Close other memory-intensive applications**
+
+All optimizations preserve the original algorithm parameters and accuracy!
+
 ## Original Work & Training
 
 This PyTorch implementation is based on the original TensorFlow version. For:

@@ -73,7 +73,7 @@ def save_results(data, output_path, format_type):
     else:
         raise ValueError(f"Unsupported format: {format_type}")
 
-def process_video_to_output(model, video_path, output_path, format_type, verbose=False, quiet=False, no_progress_bar=False):
+def process_video_to_output(model, video_path, output_path, format_type, threshold=0.5, verbose=False, quiet=False, no_progress_bar=False):
     """
     Process video and save scene transitions in the specified format
     """
@@ -89,9 +89,10 @@ def process_video_to_output(model, video_path, output_path, format_type, verbose
         pbar.set_description("Running inference")
     
     try:
-        # Use the enhanced method that provides all the rich data
-        results = model.predict_video_with_scenes(
+        # Use the enhanced method that provides all the rich data with the specified threshold
+        results = model.analyze_video(
             video_path, 
+            threshold=threshold,
             quiet=(quiet or no_progress_bar)
         )
     except RuntimeError as e:
@@ -163,6 +164,8 @@ def main():
                        help='Output format (default: csv)')
     parser.add_argument('--weights', type=str, default=None,
                        help='Path to model weights file (default: use bundled weights)')
+    parser.add_argument('--threshold', type=float, default=0.5,
+                       help='Scene boundary detection threshold (0.0-1.0, default: 0.5)')
     parser.add_argument('--no-progress-bar', action='store_true',
                        help='Suppress progress bar (useful for scripted applications)')
     
@@ -246,7 +249,7 @@ def main():
     
     with torch.no_grad():
         data = process_video_to_output(model, args.video, args.output, 
-                                     args.format, args.verbose, args.quiet, args.no_progress_bar)
+                                     args.format, args.threshold, args.verbose, args.quiet, args.no_progress_bar)
         
         # Print summary (verbose only)
         if args.verbose and not args.quiet:

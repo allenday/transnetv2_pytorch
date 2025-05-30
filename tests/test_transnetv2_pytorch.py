@@ -191,8 +191,8 @@ class TestTransNetV2Enhanced:
     
     @patch('transnetv2_pytorch.transnetv2_pytorch.TransNetV2.predict_video')
     @patch('transnetv2_pytorch.transnetv2_pytorch.TransNetV2.get_video_fps')
-    def test_predict_video_with_scenes(self, mock_get_fps, mock_predict_video, model):
-        """Test comprehensive video prediction with scenes"""
+    def test_analyze_video(self, mock_get_fps, mock_predict_video, model):
+        """Test comprehensive video analysis"""
         # Mock the dependencies
         mock_get_fps.return_value = 25.0
         
@@ -204,21 +204,30 @@ class TestTransNetV2Enhanced:
         mock_predict_video.return_value = (mock_video_frames, mock_single_pred, mock_all_pred)
         
         # Test the method
-        results = model.predict_video_with_scenes('dummy_video.mp4', threshold=0.5)
+        results = model.analyze_video('dummy_video.mp4', threshold=0.5)
         
-        # Check return structure
-        expected_keys = ['video_frames', 'single_frame_predictions', 'all_frame_predictions', 
-                        'fps', 'scenes', 'total_scenes']
-        for key in expected_keys:
-            assert key in results
+        # Verify the structure
+        assert 'video_frames' in results
+        assert 'single_frame_predictions' in results
+        assert 'all_frame_predictions' in results
+        assert 'fps' in results
+        assert 'scenes' in results
+        assert 'total_scenes' in results
         
+        # Check FPS
         assert results['fps'] == 25.0
-        assert results['total_scenes'] == len(results['scenes'])
-        assert len(results['scenes']) > 0
         
-        # Verify method calls
-        mock_get_fps.assert_called_once_with('dummy_video.mp4')
-        mock_predict_video.assert_called_once_with('dummy_video.mp4', quiet=False)
+        # Check that scenes were created
+        scenes = results['scenes']
+        assert len(scenes) > 0
+        assert results['total_scenes'] == len(scenes)
+        
+        # Verify scene structure
+        scene = scenes[0]
+        assert 'shot_id' in scene
+        assert 'start_frame' in scene
+        assert 'end_frame' in scene
+        assert 'probability' in scene
     
     def test_predictions_to_scenes_with_data_probability_calculation(self, model):
         """Test that probability calculation works correctly"""

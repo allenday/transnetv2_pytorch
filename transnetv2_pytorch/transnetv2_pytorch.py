@@ -260,6 +260,15 @@ class TransNetV2(nn.Module):
         return single_frame_pred[:len(frames)], all_frames_pred[:len(frames)]  # remove extra padded frames
         
     def predict_video(self, video_fn: str, quiet=False):
+        """
+        Get raw frame predictions.
+        
+        This method returns raw probabilities that require post-processing.
+        For processed scene boundaries, consider using detect_scenes().
+        
+        Returns:
+            Tuple of (video_frames, single_frame_predictions, all_frame_predictions)
+        """
         try:
             import ffmpeg
         except ModuleNotFoundError:
@@ -359,25 +368,28 @@ class TransNetV2(nn.Module):
         
         return output_data
     
-    def predict_video_with_scenes(self, 
-                                 video_path: str, 
-                                 threshold: float = 0.5,
-                                 quiet: bool = False) -> Dict[str, Any]:
+    def analyze_video(self, 
+                     video_path: str, 
+                     threshold: float = 0.5,
+                     quiet: bool = False) -> Dict[str, Any]:
         """
-        Predict video scenes and return comprehensive results
+        Comprehensive video analysis with raw predictions and scene data.
+        
+        Mid-level method that returns both raw predictions and processed scenes.
+        Use detect_scenes() for simple scene detection.
         
         Args:
             video_path: Path to video file
-            threshold: Threshold for scene boundary detection
+            threshold: Scene boundary detection threshold
             quiet: Whether to suppress progress output
             
         Returns:
             Dictionary containing:
             - video_frames: Raw video frames
-            - single_frame_predictions: Single frame predictions
-            - all_frame_predictions: All frame predictions  
+            - single_frame_predictions: Single frame predictions tensor
+            - all_frame_predictions: All frame predictions tensor
             - fps: Video FPS
-            - scenes: List of scene dictionaries with rich metadata
+            - scenes: List of scene dictionaries
             - total_scenes: Number of scenes detected
         """
         # Get video FPS
@@ -403,47 +415,87 @@ class TransNetV2(nn.Module):
             'scenes': scenes,
             'total_scenes': len(scenes)
         }
+    
+    def get_scene_count(self, video_path: str, threshold: float = 0.5) -> int:
+        """
+        Get the number of scenes in a video.
+        
+        Args:
+            video_path: Path to video file
+            threshold: Scene detection threshold
+            
+        Returns:
+            Number of scenes detected
+            
+        Example:
+            >>> model = TransNetV2()
+            >>> count = model.get_scene_count("video.mp4")
+            >>> print(f"Video has {count} scenes")
+        """
+        scenes = self.detect_scenes(video_path, threshold)
+        return len(scenes)
+    
+    def get_scene_timestamps(self, video_path: str, threshold: float = 0.5) -> List[tuple]:
+        """
+        Get the timestamps of scene boundaries.
+        
+        Args:
+            video_path: Path to video file
+            threshold: Scene detection threshold
+            
+        Returns:
+            List of (start_time, end_time) tuples as floats in seconds
+            
+        Example:
+            >>> model = TransNetV2()
+            >>> timestamps = model.get_scene_timestamps("video.mp4")
+            >>> for start, end in timestamps[:3]:
+            ...     print(f"Scene: {start:.1f}s - {end:.1f}s")
+        """
+        scenes = self.detect_scenes(video_path, threshold)
+        return [(float(scene['start_time']), float(scene['end_time'])) for scene in scenes]
 
-    @staticmethod
-    def visualize_predictions(frames: np.ndarray, predictions):
-        from PIL import Image, ImageDraw
-
-        if isinstance(predictions, np.ndarray):
-            predictions = [predictions]
-
-        ih, iw, ic = frames.shape[1:]
-        width = 25
-
-        # pad frames so that length of the video is divisible by width
-        # pad frames also by len(predictions) pixels in width in order to show predictions
-        pad_with = width - len(frames) % width if len(frames) % width != 0 else 0
-        frames = np.pad(frames, [(0, pad_with), (0, 1), (0, len(predictions)), (0, 0)])
-
-        predictions = [np.pad(x, (0, pad_with)) for x in predictions]
-        height = len(frames) // width
-
-        img = frames.reshape([height, width, ih + 1, iw + len(predictions), ic])
-        img = np.concatenate(np.split(
-            np.concatenate(np.split(img, height), axis=2)[0], width
-        ), axis=2)[0, :-1]
-
-        img = Image.fromarray(img)
-        draw = ImageDraw.Draw(img)
-
-        # iterate over all frames
-        for i, pred in enumerate(zip(*predictions)):
-            x, y = i % width, i // width
-            x, y = x * (iw + len(predictions)) + iw, y * (ih + 1) + ih - 1
-
-            # we can visualize multiple predictions per single frame
-            for j, p in enumerate(pred):
-                color = [0, 0, 0]
-                color[(j + 1) % 3] = 255
-
-                value = round(p * (ih - 1))
-                if value != 0:
-                    draw.line((x + j, y, x + j, y - value), fill=tuple(color), width=1)
-        return img
+    def detect_scenes(self, video_path: str, threshold: float = 0.5) -> List[Dict[str, Any]]:
+        """
+        Detect scene boundaries in a video.
+        
+        Primary scene detection method. Returns scene boundaries with timestamps.
+        
+        Args:
+            video_path: Path to video file
+            threshold: Scene boundary detection threshold (0.0-1.0, default: 0.5)
+            
+        Returns:
+            List of scene dictionaries, each containing:
+            - shot_id: Scene number (1-indexed)
+            - start_frame: Starting frame index  
+            - end_frame: Ending frame index
+            - start_time: Start timestamp in seconds (string)
+            - end_time: End timestamp in seconds (string)
+            - probability: Maximum detection probability in scene
+            
+        Example:
+            >>> model = TransNetV2()
+            >>> scenes = model.detect_scenes("video.mp4")
+            >>> for scene in scenes[:3]:
+            ...     print(f"Scene {scene['shot_id']}: {scene['start_time']}s - {scene['end_time']}s")
+        """
+        # Get video FPS
+        fps = self.get_video_fps(video_path)
+        
+        # Get predictions
+        video_frames, single_frame_predictions, all_frame_predictions = \
+            self.predict_video(video_path, quiet=True)
+        
+        # Convert predictions to numpy for scene detection
+        single_frame_np = single_frame_predictions.cpu().detach().numpy()
+        
+        # Get structured scene data
+        scenes = self.predictions_to_scenes_with_data(
+            single_frame_np, fps=fps, threshold=threshold
+        )
+        
+        return scenes
 
 class StackedDDCNNV2(nn.Module):
 

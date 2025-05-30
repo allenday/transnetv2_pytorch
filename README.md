@@ -54,20 +54,23 @@ transnetv2_pytorch path/to/video.mp4 --output predictions.txt
 # Use specific device
 transnetv2_pytorch path/to/video.mp4 --device cuda
 
+# Set detection threshold
+transnetv2_pytorch path/to/video.mp4 --threshold 0.3
+
 # Get help for all options
 transnetv2_pytorch --help
 ```
 
 ### Python API
 
-#### Basic Usage
+#### High-Level Methods (Recommended)
 
 ```python
 import torch
 from transnetv2_pytorch import TransNetV2
 
-# Initialize model with automatic device detection
-model = TransNetV2(device='auto')  # Automatically selects best device
+# Initialize model
+model = TransNetV2(device='auto')
 model.eval()
 
 # Load weights
@@ -75,81 +78,56 @@ state_dict = torch.load("transnetv2-pytorch-weights.pth", map_location=model.dev
 model.load_state_dict(state_dict)
 
 with torch.no_grad():
-    # Basic prediction (returns raw data)
-    video_frames, single_frame_pred, all_frame_pred = model.predict_video("video.mp4")
+    # Primary method: Scene detection
+    scenes = model.detect_scenes("video.mp4")
     
-    # Enhanced prediction with rich scene metadata
-    results = model.predict_video_with_scenes("video.mp4", threshold=0.5)
+    print(f"Found {len(scenes)} scenes")
+    for scene in scenes[:3]:
+        print(f"Scene {scene['shot_id']}: {scene['start_time']}s - {scene['end_time']}s")
     
-    print(f"Video FPS: {results['fps']}")
-    print(f"Total scenes: {results['total_scenes']}")
+    # Convenience methods
+    scene_count = model.get_scene_count("video.mp4")
+    timestamps = model.get_scene_timestamps("video.mp4")
     
-    # Access rich scene data with timestamps and shot IDs
-    for scene in results['scenes'][:3]:
-        print(f"Shot {scene['shot_id']}: "
-              f"frames {scene['start_frame']}-{scene['end_frame']} "
-              f"({scene['start_time']}s-{scene['end_time']}s) "
-              f"probability={scene['probability']:.4f}")
+    # Custom threshold
+    scenes = model.detect_scenes("video.mp4", threshold=0.3)
 ```
 
-#### Enhanced Features for Application Developers
-
-The TransNetV2 class now provides rich functionality previously only available in the CLI:
+#### Mid-Level Methods (Advanced Users)
 
 ```python
-# Automatic device detection
-model = TransNetV2(device='auto')  # Chooses CUDA > MPS > CPU automatically
+# Comprehensive analysis with raw predictions
+results = model.analyze_video("video.mp4")
+print(f"Video FPS: {results['fps']}")
+print(f"Total scenes: {results['total_scenes']}")
+raw_predictions = results['single_frame_predictions']
+scenes = results['scenes']
 
-# Extract video FPS
-fps = model.get_video_fps("video.mp4")
-
-# Convert frame numbers to timestamps
-timestamp = TransNetV2.frame_to_timestamp(frame_number=150, fps=25.0)
-print(f"Frame 150 = {timestamp}s")
-
-# Get structured scene data with metadata
-scenes = model.predictions_to_scenes_with_data(
-    predictions,  # numpy array or torch tensor
-    fps=25.0,     # optional, can auto-extract from video
-    threshold=0.5
-)
-
-# Each scene contains:
-# - shot_id: Scene number (1-indexed)
-# - start_frame, end_frame: Frame boundaries
-# - start_time, end_time: Timestamps (if FPS available)
-# - probability: Maximum probability in the scene
+# Raw video predictions only
+video_frames, single_frame_pred, all_frame_pred = model.predict_video("video.mp4")
 ```
 
-#### Advanced Usage
+#### Low-Level Methods (Expert Users)
 
 ```python
-# Custom device handling
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model = TransNetV2(device=device)
+# Direct model inference
+frames = load_frames_somehow()  # Your frame loading logic
+single_frame_pred, all_frame_pred = model.predict_raw(frames)
 
-# Working with existing predictions
+# Manual scene conversion
 import numpy as np
-predictions = np.array([...])  # Your existing predictions
-
-# Convert to rich scene data
-scenes = model.predictions_to_scenes_with_data(
-    predictions, 
-    video_path="video.mp4",  # Will auto-extract FPS
-    threshold=0.5
-)
-
-# Or provide FPS directly
-scenes = model.predictions_to_scenes_with_data(
-    predictions, 
-    fps=29.97,
-    threshold=0.5
-)
-
-# Comprehensive video analysis
-results = model.predict_video_with_scenes("video.mp4")
-# Returns: video_frames, predictions, fps, scenes, total_scenes
+predictions = single_frame_pred.cpu().detach().numpy()
+scenes = model.predictions_to_scenes(predictions, threshold=0.5)
+scenes_with_data = model.predictions_to_scenes_with_data(predictions, fps=25.0, threshold=0.5)
 ```
+
+#### API Consistency
+
+The CLI tool uses the same methods as the programmatic API:
+- CLI: `transnetv2_pytorch video.mp4 --threshold 0.5` 
+- API: `model.detect_scenes("video.mp4", threshold=0.5)`
+
+Both produce identical results.
 
 ## Device Support
 

@@ -1,0 +1,7 @@
+include README.md
+include LICENSE
+include pyproject.toml
+recursive-include transnetv2_pytorch *.py *.pth
+recursive-include tests *.py *.mp4
+global-exclude __pycache__
+global-exclude *.py[co] 

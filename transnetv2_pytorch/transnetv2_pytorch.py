@@ -67,11 +67,27 @@ class TransNetV2(nn.Module):
         self.cls_layer2 = nn.Linear(D, 1) if use_many_hot_targets else None
 
         self.use_mean_pooling = use_mean_pooling
+        
+        # CRITICAL FIX: Load pre-trained weights
+        self._load_pretrained_weights()
+        
         self.eval()
         self.to(self.device)
     
+    def _load_pretrained_weights(self):
+        """Load the pre-trained model weights"""
+        import os
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        model_path = os.path.join(current_dir, "transnetv2-pytorch-weights.pth")
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"Model weights not found at {model_path}")
+        
+        # Load weights and apply to model
+        state_dict = torch.load(model_path, map_location='cpu')  # Load to CPU first
+        self.load_state_dict(state_dict)
+    
     def _cleanup_memory(self):
-        """Clean up GPU memory to prevent accumulation"""
+        """Clean up GPU memory to prevent accumulation - but NOT during inference"""
         if self.memory_efficient:
             if str(self.device) == 'mps':
                 # Force MPS memory cleanup
@@ -229,21 +245,14 @@ class TransNetV2(nn.Module):
                     end_idx = 75  # 25 + 50
                     
                     predictions.append((
-                        single_frame_pred[0, start_idx:end_idx, 0].clone(),
-                        all_frames_pred[0, start_idx:end_idx, 0].clone()
+                        single_frame_pred[0, start_idx:end_idx, 0].cpu().clone(),
+                        all_frames_pred[0, start_idx:end_idx, 0].cpu().clone()
                     ))
-                    
-                    # Clean up intermediate tensors
-                    del single_frame_pred, all_frames_pred, batch_input
                     
                     # Update progress bar if present
                     if pbar is not None:
                         processed_frames = min(len(predictions) * 50, len(frames))
                         pbar.update(processed_frames - pbar.n)
-                    
-                    # Periodic memory cleanup (doesn't affect algorithm)
-                    if self.memory_efficient and batch_num % 3 == 0:
-                        self._cleanup_memory()
         finally:
             # Ensure progress bar is closed
             if pbar is not None:
@@ -252,10 +261,6 @@ class TransNetV2(nn.Module):
         # Concatenate results efficiently
         single_frame_pred = torch.cat([single_ for single_, _ in predictions], 0)
         all_frames_pred = torch.cat([all_ for _, all_ in predictions], 0)
-        
-        # Final cleanup
-        if self.memory_efficient:
-            self._cleanup_memory()
 
         return single_frame_pred[:len(frames)], all_frames_pred[:len(frames)]  # remove extra padded frames
         

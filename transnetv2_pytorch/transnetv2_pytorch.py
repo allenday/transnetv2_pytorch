@@ -17,6 +17,9 @@ warnings.filterwarnings("ignore", message=".*MPS backend.*will fall back to run 
 
 class TransNetV2(nn.Module):
 
+    # Class variable to track if auto-detection message has been shown
+    _auto_detection_message_shown = False
+
     def __init__(self,
                  F=16, L=3, S=2, D=1024,
                  use_many_hot_targets=True,
@@ -35,8 +38,18 @@ class TransNetV2(nn.Module):
         if device == 'auto':
             device = self._detect_best_device()
         
+        # Warn about MPS inconsistency but honor user's explicit choice
+        if device == 'mps':
+            print("⚠️  WARNING: MPS device has numerical inconsistency issues!")
+            print("   This neural network architecture has operations that fall back to CPU")
+            print("   inconsistently, causing different scene detection results vs. pure CPU.")
+            print("")
+        
         self.device = torch.device(device)
         self._input_size = (27, 48, 3)
+        
+        # Enable deterministic algorithms for consistent results across devices
+        self._setup_deterministic_behavior()
         
         # Internal memory optimization settings (always enabled, not exposed to user)
         self.memory_efficient = True  # Always enable memory optimizations
@@ -72,7 +85,28 @@ class TransNetV2(nn.Module):
         self._load_pretrained_weights()
         
         self.eval()
+        # Keep model on requested device for performance
         self.to(self.device)
+    
+    def _setup_deterministic_behavior(self):
+        """Setup deterministic behavior for consistent results across devices"""
+        # Set seeds for reproducibility
+        torch.manual_seed(42)
+        np.random.seed(42)
+        random.seed(42)
+        
+        # Enable deterministic algorithms where possible
+        # Note: This may impact performance but ensures consistency
+        try:
+            torch.use_deterministic_algorithms(True, warn_only=True)
+        except:
+            # Fallback for older PyTorch versions
+            pass
+            
+        # Set deterministic behavior for CuDNN
+        if torch.backends.cudnn.is_available():
+            torch.backends.cudnn.deterministic = True
+            torch.backends.cudnn.benchmark = False
     
     def _load_pretrained_weights(self):
         """Load the pre-trained model weights"""
@@ -103,12 +137,18 @@ class TransNetV2(nn.Module):
     def _detect_best_device():
         """
         Automatically detect the best available device
-        Priority: CUDA > MPS > CPU
+        Priority: CUDA > CPU > MPS (MPS has consistency issues)
         """
         if torch.cuda.is_available():
             return 'cuda'
+        # Check if MPS is available but skip it due to consistency issues
         elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-            return 'mps'
+            # Only show the message once per program run
+            if not TransNetV2._auto_detection_message_shown:
+                print("ℹ️  MPS device detected but not used due to numerical inconsistency issues.")
+                print("   Use --device mps to explicitly enable MPS (faster but inconsistent results).")
+                TransNetV2._auto_detection_message_shown = True
+            return 'cpu'
         else:
             return 'cpu'
     
@@ -289,6 +329,7 @@ class TransNetV2(nn.Module):
         ).run(capture_stdout=True, capture_stderr=True)
 
         video = np.frombuffer(video_stream, np.uint8).reshape([-1, 27, 48, 3])
+        # Use inference device (CPU) for consistent results across all devices
         video = torch.from_numpy(np.array(video, copy=True)).to(self.device)
         return (video, *self.predict_frames(video, quiet=quiet))
 

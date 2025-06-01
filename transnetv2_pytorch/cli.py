@@ -224,7 +224,7 @@ def main():
         tqdm.write("Initializing model...")
     
     # Use the enhanced constructor that handles device auto-detection and memory optimization automatically
-    model = TransNetV2(device=args.device if args.device != 'auto' else 'auto')
+    model = TransNetV2(device=args.device)
     
     # Load weights
     if not os.path.exists(args.weights):
